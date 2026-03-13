@@ -1,0 +1,1528 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ARB · OMX Stockholm Arbitrage Monitor</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600;700&family=Space+Grotesk:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg:      #0a0a0b;
+  --bg2:     #0f1011;
+  --bg3:     #141516;
+  --panel:   #131415;
+  --border:  #222426;
+  --border2: #2c2f32;
+  --text:    #d0d4d8;
+  --muted:   #4a5058;
+  --dim:     #2a2d30;
+  --accent:  #00e8a2;
+  --blue:    #60a5fa;
+  --red:     #ff4560;
+  --yellow:  #ffc340;
+  --orange:  #ff8c30;
+  --purple:  #a855f7;
+  --mono: 'IBM Plex Mono', monospace;
+  --sans: 'Space Grotesk', sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{
+  background:var(--bg);
+  color:var(--text);
+  font-family:var(--mono);
+  min-height:100vh;
+  overflow-x:hidden;
+}
+
+/* ── Background grid ── */
+body::before{
+  content:'';
+  position:fixed;inset:0;
+  background-image:
+    linear-gradient(rgba(180,185,190,.022) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(180,185,190,.022) 1px,transparent 1px);
+  background-size:48px 48px;
+  pointer-events:none;z-index:0;
+}
+
+/* ── Scanlines ── */
+body::after{
+  content:'';
+  position:fixed;inset:0;
+  background:repeating-linear-gradient(0deg,transparent,transparent 3px,rgba(0,0,0,.06) 3px,rgba(0,0,0,.06) 4px);
+  pointer-events:none;z-index:100;
+}
+
+.app{position:relative;z-index:1;max-width:1280px;margin:0 auto;padding:24px 18px 40px}
+
+/* ════════════════════════════════════════
+   HEADER
+════════════════════════════════════════ */
+header{
+  display:flex;align-items:center;justify-content:space-between;
+  padding-bottom:18px;margin-bottom:24px;
+  border-bottom:1px solid var(--border);
+  flex-wrap:wrap;gap:12px;
+}
+.logo{display:flex;align-items:baseline;gap:10px}
+.logo-mark{
+  font-family:var(--sans);font-size:20px;font-weight:700;
+  color:var(--accent);letter-spacing:.12em;
+  text-shadow:0 0 24px rgba(0,232,162,.5),0 0 48px rgba(0,232,162,.2);
+}
+.logo-sub{font-size:10px;color:var(--muted);letter-spacing:.2em;text-transform:uppercase}
+.header-right{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.live-chip{
+  display:flex;align-items:center;gap:6px;
+  padding:4px 10px;border:1px solid var(--border2);
+  font-size:10px;letter-spacing:.15em;color:var(--muted);
+  text-transform:uppercase;
+}
+.live-dot{
+  width:7px;height:7px;border-radius:50%;background:var(--dim);
+  transition:background .3s,box-shadow .3s;
+}
+.live-dot.on{background:var(--accent);box-shadow:0 0 8px var(--accent);animation:blink 1.8s infinite}
+.live-dot.err{background:var(--red);box-shadow:0 0 8px var(--red)}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
+
+.btn-sm{
+  background:none;border:1px solid var(--border2);
+  color:var(--muted);font-family:var(--mono);font-size:10px;
+  padding:5px 11px;cursor:pointer;letter-spacing:.12em;
+  text-transform:uppercase;transition:all .2s;
+}
+.btn-sm:hover{border-color:var(--accent);color:var(--accent)}
+
+/* ════════════════════════════════════════
+   TOP PAIRS HEAT BAR
+════════════════════════════════════════ */
+.heat-bar{
+  display:flex;gap:6px;overflow-x:auto;padding-bottom:4px;
+  margin-bottom:22px;scrollbar-width:none;
+}
+.heat-bar::-webkit-scrollbar{display:none}
+.heat-chip{
+  flex-shrink:0;
+  display:flex;align-items:center;gap:6px;
+  padding:6px 12px;border:1px solid var(--border);
+  background:var(--bg3);font-size:10px;letter-spacing:.08em;
+  cursor:pointer;transition:all .2s;white-space:nowrap;
+  position:relative;overflow:hidden;
+}
+.heat-chip::before{
+  content:'';position:absolute;bottom:0;left:0;height:2px;
+  background:var(--dim);width:100%;transition:background .3s;
+}
+.heat-chip.h1::before{background:var(--accent)}
+.heat-chip.h2::before{background:var(--yellow)}
+.heat-chip.h3::before{background:var(--orange)}
+.heat-chip:hover{border-color:var(--accent2);background:var(--bg2)}
+.heat-chip .chip-name{color:var(--text);font-weight:500}
+.heat-chip .chip-heat{font-size:9px;color:var(--muted)}
+.heat-chip .chip-badge{
+  font-size:9px;padding:1px 5px;letter-spacing:.1em;
+  background:rgba(0,232,162,.12);color:var(--accent);font-weight:600;
+}
+.heat-bar-label{
+  flex-shrink:0;align-self:center;
+  font-size:9px;color:var(--muted);letter-spacing:.15em;text-transform:uppercase;
+  padding-right:8px;border-right:1px solid var(--border);margin-right:2px;
+}
+
+/* ════════════════════════════════════════
+   MAIN LAYOUT
+════════════════════════════════════════ */
+.main-grid{
+  display:grid;
+  grid-template-columns:320px 1fr;
+  gap:18px;
+  margin-bottom:18px;
+}
+@media(max-width:860px){.main-grid{grid-template-columns:1fr}}
+
+/* ════════════════════════════════════════
+   PANELS
+════════════════════════════════════════ */
+.panel{
+  background:var(--panel);
+  border:1px solid var(--border);
+  padding:18px;
+}
+.ptitle{
+  font-size:9px;letter-spacing:.25em;text-transform:uppercase;
+  color:var(--muted);margin-bottom:16px;padding-bottom:11px;
+  border-bottom:1px solid var(--border);
+  display:flex;align-items:center;gap:8px;
+}
+.ptitle span{color:var(--accent);font-size:11px}
+
+/* ════════════════════════════════════════
+   PAIR SELECTOR
+════════════════════════════════════════ */
+.pair-search-wrap{position:relative;margin-bottom:10px}
+.pair-search{
+  width:100%;background:var(--bg2);border:1px solid var(--border2);
+  color:var(--text);font-family:var(--mono);font-size:13px;
+  padding:9px 12px 9px 32px;outline:none;transition:all .2s;
+}
+.pair-search:focus{border-color:var(--accent);box-shadow:0 0 0 1px rgba(0,232,162,.12)}
+.pair-search::placeholder{color:var(--muted);font-size:11px}
+.search-icon{position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--muted);font-size:13px;pointer-events:none}
+
+.pair-dropdown{
+  width:100%;background:var(--bg2);border:1px solid var(--border2);
+  color:var(--text);font-family:var(--mono);font-size:12px;
+  padding:9px 12px;outline:none;transition:all .2s;
+  appearance:none;-webkit-appearance:none;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%233a5570'/%3E%3C/svg%3E");
+  background-repeat:no-repeat;background-position:right 12px center;
+  padding-right:30px;
+  cursor:pointer;
+  max-height:220px;
+}
+.pair-dropdown:focus{border-color:var(--accent)}
+.pair-dropdown option{background:var(--bg3);padding:6px}
+.pair-dropdown optgroup{color:var(--accent);font-weight:600;font-size:10px;letter-spacing:.15em}
+
+/* ════════════════════════════════════════
+   PAIR INFO STRIP
+════════════════════════════════════════ */
+.pair-info{
+  background:var(--bg2);border:1px solid var(--border);
+  padding:10px 12px;margin-bottom:14px;
+  display:none;
+  flex-direction:column;gap:4px;
+}
+.pair-info.visible{display:flex}
+.pair-info-name{font-family:var(--sans);font-size:14px;font-weight:600;color:var(--text)}
+.pair-info-meta{font-size:10px;color:var(--muted);letter-spacing:.08em;display:flex;gap:12px;flex-wrap:wrap}
+.pair-info-meta .tag{
+  padding:1px 6px;background:rgba(33,150,243,.1);
+  border:1px solid rgba(33,150,243,.2);color:var(--blue);
+  font-size:9px;letter-spacing:.1em;
+}
+.seen-badge{padding:1px 6px;background:rgba(0,232,162,.08);border:1px solid rgba(0,232,162,.15);color:var(--accent);font-size:9px;letter-spacing:.1em}
+.never-badge{padding:1px 6px;background:rgba(58,85,112,.1);border:1px solid var(--border);color:var(--muted);font-size:9px;letter-spacing:.1em}
+
+/* ════════════════════════════════════════
+   FORM
+════════════════════════════════════════ */
+.frow{margin-bottom:12px}
+.frow2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+label{display:block;font-size:9px;letter-spacing:.18em;color:var(--muted);margin-bottom:4px;text-transform:uppercase}
+input[type=number]{
+  width:100%;background:var(--bg2);border:1px solid var(--border2);
+  color:var(--text);font-family:var(--mono);font-size:13px;
+  padding:8px 10px;outline:none;transition:all .2s;
+  -webkit-appearance:none;appearance:none;
+}
+input[type=number]:focus{border-color:var(--accent);box-shadow:0 0 0 1px rgba(0,232,162,.1)}
+input::placeholder{color:var(--muted);font-size:11px}
+.input-wrap{position:relative}
+.input-wrap input{padding-right:36px}
+.input-wrap .unit{position:absolute;right:10px;top:50%;transform:translateY(-50%);font-size:10px;color:var(--muted);pointer-events:none}
+select.fsel{
+  width:100%;background:var(--bg2);border:1px solid var(--border2);
+  color:var(--text);font-family:var(--mono);font-size:12px;
+  padding:8px 10px;outline:none;appearance:none;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%233a5570'/%3E%3C/svg%3E");
+  background-repeat:no-repeat;background-position:right 10px center;
+  padding-right:28px;cursor:pointer;
+}
+.btn-start{
+  width:100%;background:var(--accent);border:none;color:#000;
+  font-family:var(--mono);font-size:11px;font-weight:700;
+  letter-spacing:.2em;text-transform:uppercase;
+  padding:11px;cursor:pointer;margin-top:4px;transition:all .2s;
+}
+.btn-start:hover{background:#00ffb8;box-shadow:0 0 24px rgba(0,232,162,.35)}
+.btn-start:active{transform:scale(.99)}
+.btn-stop{
+  width:100%;background:none;border:1px solid var(--border2);
+  color:var(--muted);font-family:var(--mono);font-size:10px;
+  letter-spacing:.15em;text-transform:uppercase;
+  padding:8px;cursor:pointer;margin-top:7px;transition:all .2s;
+}
+.btn-stop:hover{border-color:var(--red);color:var(--red)}
+
+/* ════════════════════════════════════════
+   PRICES
+════════════════════════════════════════ */
+.price-row{
+  display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px;
+}
+.pcard{
+  background:var(--bg2);border:1px solid var(--border);
+  padding:14px;position:relative;overflow:hidden;
+  transition:border-color .4s;
+}
+.pcard::after{
+  content:'';position:absolute;top:0;left:0;right:0;height:2px;
+  background:var(--border2);transition:background .4s;
+}
+.pcard.buy{border-color:var(--accent)}
+.pcard.buy::after{background:var(--accent)}
+.pcard.sell{border-color:var(--red)}
+.pcard.sell::after{background:var(--red)}
+
+.pc-label{font-size:9px;letter-spacing:.18em;color:var(--muted);text-transform:uppercase;margin-bottom:2px}
+.pc-ticker{font-size:13px;font-weight:600;color:var(--text);margin-bottom:6px}
+.pc-price{font-size:26px;font-weight:500;color:var(--blue);line-height:1;margin-bottom:5px;letter-spacing:-.02em}
+.pc-price.—{color:var(--muted);font-size:20px}
+.pc-chg{font-size:11px}
+.pc-chg.pos{color:var(--accent)}
+.pc-chg.neg{color:var(--red)}
+.pc-chg.flat{color:var(--muted)}
+.pc-action{
+  position:absolute;bottom:8px;right:8px;
+  font-size:9px;letter-spacing:.12em;padding:2px 6px;
+  display:none;
+}
+.pcard.buy .pc-action{display:block;background:rgba(0,232,162,.12);color:var(--accent)}
+.pcard.sell .pc-action{display:block;background:rgba(255,69,96,.12);color:var(--red)}
+
+/* ════════════════════════════════════════
+   SPREAD METER
+════════════════════════════════════════ */
+.spread-meter{
+  background:var(--bg2);border:1px solid var(--border);
+  padding:14px;margin-bottom:14px;
+}
+.spread-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
+.spread-lbl{font-size:9px;letter-spacing:.18em;color:var(--muted);text-transform:uppercase}
+.spread-val{font-size:22px;font-weight:600;letter-spacing:-.02em;transition:color .3s}
+.spread-val.pos{color:var(--accent)}
+.spread-val.neg{color:var(--red)}
+.spread-val.neu{color:var(--text)}
+
+.track{height:6px;background:var(--border2);position:relative;margin-bottom:6px;overflow:hidden}
+.track-fill{
+  height:100%;width:0%;
+  background:linear-gradient(90deg,var(--red),var(--yellow),var(--accent));
+  clip-path:inset(0 calc(100% - var(--w,0%)) 0 0);
+  transition:clip-path .8s ease;
+}
+.track-markers{display:flex;justify-content:space-between;font-size:9px;color:var(--muted)}
+
+/* ════════════════════════════════════════
+   ANALYSIS
+════════════════════════════════════════ */
+.atbl{width:100%;border-collapse:collapse}
+.atbl tr{border-bottom:1px solid var(--border)}
+.atbl tr:last-child{border-bottom:none}
+.atbl td{padding:8px 0;font-size:11px}
+.atbl td:first-child{color:var(--muted);font-size:10px;letter-spacing:.05em}
+.atbl td:last-child{text-align:right;font-weight:500}
+.atbl tr.total-row td{padding-top:11px;border-top:1px solid var(--border2)}
+.atbl tr.total-row td:first-child{color:var(--text);font-weight:600;font-size:11px;letter-spacing:.06em}
+.v-pos{color:var(--accent)}
+.v-neg{color:var(--red)}
+.v-hi{color:var(--yellow);font-weight:600}
+.v-dim{color:var(--muted)}
+
+/* ════════════════════════════════════════
+   VERDICT
+════════════════════════════════════════ */
+.verdict{
+  margin-top:14px;padding:14px;border:1px solid var(--border);
+  text-align:center;transition:all .4s;background:var(--bg2);
+}
+.verdict.go{border-color:var(--accent);background:rgba(0,232,162,.04);box-shadow:inset 0 0 40px rgba(0,232,162,.03)}
+.verdict.warn{border-color:var(--yellow);background:rgba(255,195,64,.03)}
+.verdict.no{border-color:var(--border)}
+.v-icon{font-size:22px;margin-bottom:7px}
+.v-title{font-size:12px;font-weight:700;letter-spacing:.18em;text-transform:uppercase;margin-bottom:5px}
+.verdict.go .v-title{color:var(--accent)}
+.verdict.warn .v-title{color:var(--yellow)}
+.verdict.no .v-title{color:var(--muted)}
+.v-desc{font-size:10px;color:var(--muted);line-height:1.7;max-width:340px;margin:0 auto}
+
+/* ════════════════════════════════════════
+   HISTORY / SPARKLINE PANEL
+════════════════════════════════════════ */
+.bottom-grid{display:grid;grid-template-columns:1fr 360px;gap:18px;margin-bottom:18px}
+@media(max-width:860px){.bottom-grid{grid-template-columns:1fr}}
+
+.spark-wrap{background:var(--panel);border:1px solid var(--border);padding:18px}
+.spark-canvas{width:100%;height:80px;display:block}
+
+.log-panel{background:var(--panel);border:1px solid var(--border);padding:18px}
+.log-list{max-height:200px;overflow-y:auto;scrollbar-width:thin;scrollbar-color:var(--border2) transparent}
+@keyframes fadeDown{from{opacity:0;transform:translateY(-3px)}to{opacity:1;transform:translateY(0)}}
+.log-item:last-child{border-bottom:none}
+.log-t{color:var(--muted);font-size:9px}
+.log-m{color:var(--text);line-height:1.4}
+.log-b{
+  font-size:8px;letter-spacing:.1em;font-weight:700;
+  padding:2px 5px;white-space:nowrap;
+}
+.log-b.go{background:rgba(0,232,162,.12);color:var(--accent)}
+.log-b.no{background:rgba(58,85,112,.15);color:var(--muted)}
+.log-b.err{background:rgba(255,69,96,.12);color:var(--red)}
+.log-b.info{background:rgba(33,150,243,.12);color:var(--blue)}
+.log-del{
+  background:none;border:none;color:var(--dim);font-size:12px;
+  cursor:pointer;padding:0 2px;line-height:1;transition:color .15s;
+  flex-shrink:0;align-self:center;
+}
+.log-del:hover{color:var(--red)}
+.log-item{
+  display:grid;grid-template-columns:78px 1fr auto auto;gap:6px;
+  padding:6px 0;border-bottom:1px solid var(--border);
+  font-size:10px;align-items:center;
+  animation:fadeDown .25s ease;
+}
+.btn-clear-log{
+  background:none;border:none;color:var(--muted);font-family:var(--mono);
+  font-size:9px;letter-spacing:.1em;cursor:pointer;padding:0;
+  margin-left:auto;transition:color .15s;text-transform:uppercase;
+}
+.btn-clear-log:hover{color:var(--red)}
+
+/* ════════════════════════════════════════
+   LEARNED PAIRS STATS
+════════════════════════════════════════ */
+.stats-strip{
+  background:var(--panel);border:1px solid var(--border);
+  padding:18px;margin-bottom:18px;
+}
+.stats-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+@media(max-width:680px){.stats-grid{grid-template-columns:repeat(2,1fr)}}
+.stat-box{background:var(--bg2);border:1px solid var(--border);padding:12px}
+.stat-num{font-size:22px;font-weight:600;color:var(--accent);letter-spacing:-.02em;margin-bottom:3px}
+.stat-label{font-size:9px;color:var(--muted);letter-spacing:.12em;text-transform:uppercase;line-height:1.4}
+
+/* ════════════════════════════════════════
+   FLASH / NOTIFICATIONS
+════════════════════════════════════════ */
+.flash{
+  position:fixed;top:18px;right:18px;z-index:999;
+  background:var(--panel);border:1px solid var(--accent);
+  padding:12px 18px;font-size:11px;color:var(--accent);
+  max-width:280px;letter-spacing:.05em;line-height:1.5;
+  box-shadow:0 0 40px rgba(0,232,162,.15);
+  animation:slideIn .3s ease, fadeOut .3s ease 4s forwards;
+}
+.flash.err{border-color:var(--red);color:var(--red);box-shadow:0 0 40px rgba(255,69,96,.12)}
+@keyframes slideIn{from{transform:translateX(100%);opacity:0}to{transform:translateX(0);opacity:1}}
+@keyframes fadeOut{to{opacity:0;transform:translateX(10px)}}
+
+/* ════════════════════════════════════════
+   OPPORTUNITY BANNER
+════════════════════════════════════════ */
+.opp-banner{
+  display:none;
+  background:rgba(0,232,162,.05);
+  border:1px solid rgba(0,232,162,.25);
+  padding:10px 16px;margin-bottom:14px;
+  font-size:11px;color:var(--accent);letter-spacing:.05em;
+  align-items:center;gap:10px;
+}
+.opp-banner.on{display:flex}
+.opp-banner::before{content:'▲';font-size:14px}
+
+/* ════════════════════════════════════════
+   MISC
+════════════════════════════════════════ */
+.divider{height:1px;background:var(--border);margin:14px 0}
+.ts{font-size:9px;color:var(--muted);text-align:right;margin-top:6px;letter-spacing:.06em}
+.empty-log{text-align:center;padding:28px;color:var(--muted);font-size:10px;line-height:2;letter-spacing:.05em}
+::-webkit-scrollbar{width:3px;height:3px}
+::-webkit-scrollbar-thumb{background:var(--border2)}
+::-webkit-scrollbar-track{background:transparent}
+.spin{animation:rot 1s linear infinite;display:inline-block}
+@keyframes rot{to{transform:rotate(360deg)}}
+
+/* ── OWNED SHARE PICKER ── */
+.owned-picker{display:flex;gap:0;border:1px solid var(--border2);overflow:hidden;margin-top:4px}
+.owned-btn{
+  flex:1;background:none;border:none;border-right:1px solid var(--border2);
+  color:var(--muted);font-family:var(--mono);font-size:11px;font-weight:600;
+  letter-spacing:.1em;padding:8px 4px;cursor:pointer;transition:all .18s;
+}
+.owned-btn:last-child{border-right:none}
+.owned-btn.active{background:var(--accent);color:#000}
+.owned-btn:not(.active):hover{color:var(--accent);background:rgba(0,232,162,.07)}
+.owned-note{font-size:9px;color:var(--muted);margin-top:5px;letter-spacing:.04em;line-height:1.5}
+
+/* ── SEK / % TOGGLE ── */
+.unit-toggle{
+  display:flex;border:1px solid var(--border2);overflow:hidden;
+  flex-shrink:0;height:100%;
+}
+.unit-toggle button{
+  background:none;border:none;color:var(--muted);
+  font-family:var(--mono);font-size:10px;font-weight:600;
+  letter-spacing:.1em;padding:0 10px;cursor:pointer;
+  transition:all .18s;white-space:nowrap;
+}
+.unit-toggle button.active{background:var(--accent);color:#000}
+.unit-toggle button:not(.active):hover{color:var(--accent);background:rgba(0,232,162,.06)}
+.courtage-row{display:flex;gap:0;align-items:stretch}
+.courtage-row .input-wrap{flex:1}
+.courtage-row .input-wrap input{border-right:none}
+
+/* ── TELEGRAM PANEL ── */
+.tg-panel{
+  background:var(--panel);border:1px solid var(--border);
+  padding:18px;margin-bottom:18px;
+}
+.tg-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+@media(max-width:680px){.tg-grid{grid-template-columns:1fr}}
+.tg-status{
+  display:flex;align-items:center;gap:8px;
+  padding:8px 12px;background:var(--bg2);border:1px solid var(--border);
+  font-size:10px;letter-spacing:.08em;margin-bottom:12px;
+}
+.tg-dot{width:7px;height:7px;border-radius:50%;background:var(--dim);flex-shrink:0;transition:all .3s}
+.tg-dot.ok{background:var(--accent);box-shadow:0 0 8px var(--accent)}
+.tg-dot.err{background:var(--red);box-shadow:0 0 8px var(--red)}
+.tg-dot.wait{background:var(--yellow);animation:blink 1s infinite}
+.tg-status-txt{color:var(--muted)}
+.tg-status-txt.ok{color:var(--accent)}
+.tg-status-txt.err{color:var(--red)}
+.tg-help{
+  font-size:9px;color:var(--muted);line-height:1.9;letter-spacing:.04em;
+  padding:10px 12px;background:rgba(33,150,243,.04);
+  border:1px solid rgba(33,150,243,.1);margin-top:10px;
+}
+.tg-help a{color:var(--blue);text-decoration:none}
+.tg-help a:hover{text-decoration:underline}
+.btn-tg-test{
+  background:none;border:1px solid var(--border2);color:var(--muted);
+  font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;
+  padding:8px 14px;cursor:pointer;transition:all .2s;margin-top:8px;width:100%;
+}
+.btn-tg-test:hover{border-color:var(--blue);color:var(--blue)}
+.tg-throttle-note{font-size:9px;color:var(--muted);margin-top:6px;letter-spacing:.04em}
+</style>
+</head>
+<body>
+<div class="app">
+
+<!-- ═══════════════════════════════════════════
+     HEADER
+════════════════════════════════════════════ -->
+<header>
+  <div class="logo">
+    <span class="logo-mark">ARB</span>
+    <span class="logo-sub">OMX Stockholm · A/B Spread Monitor</span>
+  </div>
+  <div class="header-right">
+    <div class="live-chip">
+      <span class="live-dot" id="liveDot"></span>
+      <span id="liveText">IDLE</span>
+    </div>
+    <button class="btn-sm" onclick="manualRefresh()">↻ Refresh</button>
+    <button class="btn-sm" onclick="clearMemory()" title="Clear all learned data">⊗ Reset Memory</button>
+  </div>
+</header>
+
+<!-- ═══════════════════════════════════════════
+     HOT PAIRS (learned)
+════════════════════════════════════════════ -->
+<div id="heatBarWrap" style="display:none;margin-bottom:18px">
+  <div class="heat-bar" id="heatBar">
+    <span class="heat-bar-label">Top pairs</span>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════
+     STATS
+════════════════════════════════════════════ -->
+<div class="stats-strip">
+  <div class="ptitle"><span>◈</span> Learned Intelligence</div>
+  <div class="stats-grid">
+    <div class="stat-box">
+      <div class="stat-num" id="statPairsMonitored">0</div>
+      <div class="stat-label">Pairs monitored</div>
+    </div>
+    <div class="stat-box">
+      <div class="stat-num" id="statOppsFound">0</div>
+      <div class="stat-label">Opportunities found</div>
+    </div>
+    <div class="stat-box">
+      <div class="stat-num" id="statBestSpread">—</div>
+      <div class="stat-label">Best spread ever seen</div>
+    </div>
+    <div class="stat-box">
+      <div class="stat-num" id="statFetches">0</div>
+      <div class="stat-label">Total price fetches</div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════
+     OPPORTUNITY BANNER
+════════════════════════════════════════════ -->
+<div class="opp-banner" id="oppBanner"></div>
+
+<!-- ═══════════════════════════════════════════
+     MAIN GRID
+════════════════════════════════════════════ -->
+<div class="main-grid">
+
+  <!-- LEFT: Config -->
+  <div>
+    <div class="panel">
+      <div class="ptitle"><span>◉</span> Select Pair</div>
+
+      <div class="pair-search-wrap">
+        <span class="search-icon">⌕</span>
+        <input class="pair-search" id="pairSearch" type="text"
+               placeholder="Search company or ticker…"
+               oninput="filterPairs(this.value)" autocomplete="off">
+      </div>
+
+      <div class="frow">
+        <select class="pair-dropdown" id="pairSelect" size="7" onchange="onPairSelect(this.value)">
+        </select>
+      </div>
+
+      <!-- Pair info strip -->
+      <div class="pair-info" id="pairInfo">
+        <div class="pair-info-name" id="pairName">—</div>
+        <div class="pair-info-meta" id="pairMeta"></div>
+      </div>
+
+      <div class="divider"></div>
+      <div class="ptitle"><span>◎</span> Parameters</div>
+
+      <div class="frow">
+        <label>Number of Shares</label>
+        <input type="number" id="numShares" placeholder="e.g. 500" min="1" value="500">
+      </div>
+      <div class="frow">
+        <label>I Currently Own</label>
+        <div class="owned-picker" id="ownedPicker">
+          <button class="owned-btn" id="ownA" onclick="setOwned('A')">A-Share</button>
+          <button class="owned-btn" id="ownB" onclick="setOwned('B')">B/C-Share</button>
+          <button class="owned-btn active" id="ownEither" onclick="setOwned('either')">Either</button>
+        </div>
+        <div class="owned-note" id="ownedNote">Showing opportunities in both directions.</div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 96px;gap:10px">
+        <div class="frow">
+          <label>Courtage per Trade</label>
+          <div class="courtage-row">
+            <div class="input-wrap">
+              <input type="number" id="courtage" placeholder="99" min="0" step="0.01" value="99">
+              <span class="unit" id="courtageUnit">SEK</span>
+            </div>
+            <div class="unit-toggle">
+              <button id="btnSEK" class="active" onclick="setCourtageMode('SEK')">SEK</button>
+              <button id="btnPCT" onclick="setCourtageMode('%')">%</button>
+            </div>
+          </div>
+        </div>
+        <div class="frow">
+          <label>Margin</label>
+          <div class="input-wrap">
+            <input type="number" id="margin" placeholder="10" min="0" max="100" step="0.1" value="10" style="padding-right:24px">
+            <span class="unit">%</span>
+          </div>
+        </div>
+      </div>
+      <div class="frow">
+        <label>Refresh Interval</label>
+        <select class="fsel" id="refreshInterval">
+          <option value="30">Every 30 seconds</option>
+          <option value="60" selected>Every 60 seconds</option>
+          <option value="120">Every 2 minutes</option>
+          <option value="300">Every 5 minutes</option>
+          <option value="600">Every 10 minutes</option>
+        </select>
+      </div>
+
+      <button class="btn-start" onclick="startMonitoring()">▶ START MONITORING</button>
+      <button class="btn-stop" onclick="stopMonitoring()">■ STOP</button>
+
+      <div class="divider" style="margin-top:14px"></div>
+      <div style="font-size:9px;color:var(--muted);line-height:1.9;letter-spacing:.05em">
+        <span style="color:var(--blue)">//</span> App learns which pairs show opportunities most often and ranks them at the top.<br>
+        <span style="color:var(--blue)">//</span> Data is stored locally in your browser — no server needed.<br>
+        <span style="color:var(--blue)">//</span> Hosted on GitHub Pages → runs free 24/7.
+      </div>
+    </div>
+  </div>
+
+  <!-- RIGHT: Live data -->
+  <div>
+    <div class="panel">
+      <div class="ptitle"><span>▣</span> Live Prices
+        <span style="margin-left:auto;font-size:9px;color:var(--muted)" id="lastUpdated"></span>
+      </div>
+
+      <div class="price-row">
+        <div class="pcard" id="cardA">
+          <div class="pc-label">Share A</div>
+          <div class="pc-ticker" id="tA">—</div>
+          <div class="pc-price —" id="pA">—</div>
+          <div class="pc-chg flat" id="cA">— —</div>
+          <div class="pc-action" id="actA">BUY</div>
+        </div>
+        <div class="pcard" id="cardB">
+          <div class="pc-label">Share B</div>
+          <div class="pc-ticker" id="tB">—</div>
+          <div class="pc-price —" id="pB">—</div>
+          <div class="pc-chg flat" id="cB">— —</div>
+          <div class="pc-action" id="actB">BUY</div>
+        </div>
+      </div>
+
+      <!-- Spread meter -->
+      <div class="spread-meter">
+        <div class="spread-top">
+          <span class="spread-lbl">Spread |A − B|</span>
+          <span class="spread-val neu" id="spreadVal">—</span>
+        </div>
+        <div class="track"><div class="track-fill" id="trackFill" style="--w:0%"></div></div>
+        <div class="track-markers">
+          <span>0</span>
+          <span id="tmBreak">Break-even —</span>
+          <span id="tmTarget">Target —</span>
+        </div>
+      </div>
+
+      <!-- Analysis table -->
+      <div class="ptitle" style="margin-top:4px"><span>◆</span> Profit Analysis</div>
+      <table class="atbl">
+        <tr><td>Spread per share</td><td id="r_spread" class="v-dim">—</td></tr>
+        <tr><td>Gross spread (× shares)</td><td id="r_gross" class="v-dim">—</td></tr>
+        <tr><td>Courtage total (2 trades)</td><td id="r_court" class="v-neg">—</td></tr>
+        <tr><td>Safety margin (<span id="r_mPct">—</span>% of gross)</td><td id="r_margAmt" class="v-neg">—</td></tr>
+        <tr><td>Total costs</td><td id="r_costs" class="v-neg">—</td></tr>
+        <tr class="total-row">
+          <td>NET PROFIT / LOSS</td>
+          <td id="r_net">—</td>
+        </tr>
+        <tr><td>Break-even spread/share</td><td id="r_be" class="v-hi">—</td></tr>
+      </table>
+
+      <div class="ts" id="ts"></div>
+
+      <!-- Verdict -->
+      <div class="verdict no" id="verdict">
+        <div class="v-icon" id="vIcon">◌</div>
+        <div class="v-title" id="vTitle">AWAITING DATA</div>
+        <div class="v-desc" id="vDesc">Select a pair and start monitoring to begin analysis.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════
+     BOTTOM: SPARKLINE + LOG
+════════════════════════════════════════════ -->
+<div class="bottom-grid">
+  <div class="spark-wrap">
+    <div class="ptitle"><span>◈</span> Spread History <span style="color:var(--muted);margin-left:8px;font-size:9px" id="sparkPair"></span></div>
+    <canvas class="spark-canvas" id="sparkCanvas"></canvas>
+    <div style="font-size:9px;color:var(--muted);margin-top:6px;display:flex;justify-content:space-between">
+      <span id="sparkMin">Min: —</span>
+      <span id="sparkAvg">Avg: —</span>
+      <span id="sparkMax">Max: —</span>
+    </div>
+  </div>
+  <div class="log-panel">
+    <div class="ptitle"><span>▤</span> Event Log <button class="btn-clear-log" onclick="clearLog()">⊗ Clear all</button></div>
+    <div class="log-list" id="logList">
+      <div class="empty-log">No events yet.<br>Start monitoring to see activity.</div>
+    </div>
+  </div>
+</div>
+
+</div><!-- /app -->
+
+<!-- ═══════════════════════════════════════════
+     TELEGRAM
+════════════════════════════════════════════ -->
+<div class="app" style="padding-top:0">
+<div class="tg-panel">
+  <div class="ptitle"><span>✈</span> Telegram Notifications
+    <span style="margin-left:auto;font-size:9px;padding:2px 7px;background:rgba(33,150,243,.1);border:1px solid rgba(33,150,243,.2);color:var(--blue)">OPTIONAL</span>
+  </div>
+
+  <div class="tg-status">
+    <span class="tg-dot" id="tgDot"></span>
+    <span class="tg-status-txt" id="tgStatusTxt">Not configured — enter Bot Token &amp; Chat ID below</span>
+  </div>
+
+  <div class="tg-grid">
+    <div class="frow">
+      <label>Bot Token</label>
+      <input type="text" id="tgToken" placeholder="123456789:AABBcc…"
+             autocomplete="off" spellcheck="false"
+             oninput="saveTgConfig()" style="font-size:11px;background:var(--bg2);border:1px solid var(--border2);color:var(--text);font-family:var(--mono);width:100%;padding:8px 10px;outline:none">
+    </div>
+    <div class="frow">
+      <label>Chat ID</label>
+      <input type="text" id="tgChatId" placeholder="-100123456789 or 123456"
+             autocomplete="off" spellcheck="false"
+             oninput="saveTgConfig()" style="font-size:11px;background:var(--bg2);border:1px solid var(--border2);color:var(--text);font-family:var(--mono);width:100%;padding:8px 10px;outline:none">
+    </div>
+  </div>
+
+  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:2px">
+    <div style="flex:1">
+      <label style="display:block;font-size:9px;letter-spacing:.18em;color:var(--muted);margin-bottom:4px;text-transform:uppercase">Alert cooldown (min between alerts)</label>
+      <div class="input-wrap" style="max-width:160px">
+        <input type="number" id="tgCooldown" value="15" min="1" max="1440"
+               oninput="saveTgConfig()" style="background:var(--bg2);border:1px solid var(--border2);color:var(--text);font-family:var(--mono);font-size:13px;padding:8px 36px 8px 10px;outline:none;width:100%">
+        <span class="unit">min</span>
+      </div>
+    </div>
+    <div style="flex:1;display:flex;flex-direction:column;gap:6px;padding-top:18px">
+      <button class="btn-tg-test" onclick="testTelegram()">▷ Send Test Message</button>
+    </div>
+  </div>
+
+  <div class="tg-help">
+    <span style="color:var(--blue)">// HOW TO SET UP YOUR TELEGRAM BOT</span><br>
+    1. Open Telegram → message <a href="https://t.me/BotFather" target="_blank">@BotFather</a> → type <code>/newbot</code> → follow prompts → copy the <strong>Bot Token</strong><br>
+    2. Start a conversation with your new bot (send it any message)<br>
+    3. Get your Chat ID: visit <code>https://api.telegram.org/bot<strong>TOKEN</strong>/getUpdates</code> in browser → find <code>"chat":{"id": …}</code><br>
+    4. For a <strong>group/channel</strong>: add the bot as admin → use the group's negative Chat ID<br>
+    5. Paste both values above → click Test to verify → done ✓
+  </div>
+</div>
+</div>
+
+<script>
+// ══════════════════════════════════════════════════════════════
+//  COURTAGE MODE  (SEK fixed | % of trade value)
+// ══════════════════════════════════════════════════════════════
+let courtageMode = localStorage.getItem('arb_courtage_mode') || 'SEK';
+
+function setCourtageMode(mode) {
+  courtageMode = mode;
+  localStorage.setItem('arb_courtage_mode', mode);
+  document.getElementById('btnSEK').classList.toggle('active', mode === 'SEK');
+  document.getElementById('btnPCT').classList.toggle('active', mode === '%');
+  document.getElementById('courtageUnit').textContent = mode;
+  // Update placeholder
+  document.getElementById('courtage').placeholder = mode === 'SEK' ? '99' : '0.25';
+}
+
+// Returns total courtage cost in SEK for both legs
+function calcCourtage(courtageVal, mode, pA, pB, numShares) {
+  if (mode === 'SEK') {
+    return courtageVal * 2;                            // fixed fee × 2 legs
+  } else {
+    // % of each leg's trade value: (pA × n) and (pB × n)
+    const rate = courtageVal / 100;
+    return rate * pA * numShares + rate * pB * numShares;
+  }
+}
+
+// ══════════════════════════════════════════════════════════════
+//  TELEGRAM
+// ══════════════════════════════════════════════════════════════
+const TG_KEY = 'arb_telegram_v1';
+let lastTgAlert = 0;   // timestamp ms
+
+function loadTgConfig() {
+  try { return JSON.parse(localStorage.getItem(TG_KEY)) || {}; } catch { return {}; }
+}
+function saveTgConfig() {
+  const cfg = {
+    token:    document.getElementById('tgToken').value.trim(),
+    chatId:   document.getElementById('tgChatId').value.trim(),
+    cooldown: parseInt(document.getElementById('tgCooldown').value) || 15,
+  };
+  localStorage.setItem(TG_KEY, JSON.stringify(cfg));
+  updateTgStatus();
+}
+function updateTgStatus() {
+  const cfg = loadTgConfig();
+  const dot = document.getElementById('tgDot');
+  const txt = document.getElementById('tgStatusTxt');
+  if (cfg.token && cfg.chatId) {
+    dot.className = 'tg-dot ok';
+    txt.className = 'tg-status-txt ok';
+    txt.textContent = `Active · Bot configured · cooldown ${cfg.cooldown||15} min`;
+  } else {
+    dot.className = 'tg-dot';
+    txt.className = 'tg-status-txt';
+    txt.textContent = 'Not configured — enter Bot Token & Chat ID below';
+  }
+}
+
+async function sendTelegram(text) {
+  const cfg = loadTgConfig();
+  if (!cfg.token || !cfg.chatId) return false;
+  const url = `https://api.telegram.org/bot${cfg.token}/sendMessage`;
+  try {
+    const r = await fetch(url, {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ chat_id: cfg.chatId, text, parse_mode:'HTML' })
+    });
+    const json = await r.json();
+    if (!json.ok) throw new Error(json.description || 'Telegram API error');
+    return true;
+  } catch(e) {
+    addLog('err', `Telegram: ${e.message}`);
+    return false;
+  }
+}
+
+async function testTelegram() {
+  const cfg = loadTgConfig();
+  if (!cfg.token || !cfg.chatId) {
+    alert('Enter Bot Token and Chat ID first.'); return;
+  }
+  const dot = document.getElementById('tgDot');
+  const txt = document.getElementById('tgStatusTxt');
+  dot.className = 'tg-dot wait';
+  txt.className = 'tg-status-txt';
+  txt.textContent = 'Sending test message…';
+  const ok = await sendTelegram(
+    `🤖 <b>ARB Monitor — Test Message</b>\n\nYour Telegram alerts are working correctly.\n\n📍 Bot is watching OMX Stockholm A/B pairs\n⏱ Cooldown: ${cfg.cooldown} min between alerts`
+  );
+  if (ok) {
+    dot.className = 'tg-dot ok';
+    txt.className = 'tg-status-txt ok';
+    txt.textContent = '✓ Test sent successfully!';
+    addLog('info', 'Telegram test message sent');
+  } else {
+    dot.className = 'tg-dot err';
+    txt.className = 'tg-status-txt err';
+    txt.textContent = '✕ Send failed — check token & chat ID';
+  }
+}
+
+async function maybeSendTgAlert(pair, direction, net, pA, pB, absSpread, cur, marginPct) {
+  const cfg = loadTgConfig();
+  if (!cfg.token || !cfg.chatId) return;
+  const now = Date.now();
+  const cooldownMs = (cfg.cooldown || 15) * 60 * 1000;
+  if (now - lastTgAlert < cooldownMs) return;   // respect cooldown
+  lastTgAlert = now;
+  const time = new Date().toLocaleString('sv-SE');
+  const msg =
+`🟢 <b>ARBITRAGE OPPORTUNITY</b>
+
+📊 <b>${pair.name}</b>
+🔀 ${direction}
+
+💹 ${pair.tA}: <b>${fmt(pA)} ${cur}</b>
+💹 ${pair.tB}: <b>${fmt(pB)} ${cur}</b>
+📐 Spread: <b>${fmt(absSpread)} ${cur}/share</b>
+
+💰 Est. net profit: <b>+${fmt(net)} ${cur}</b>
+🛡 Safety margin: ${marginPct}%
+🕐 ${time}
+
+<i>ARB Monitor · OMX Stockholm</i>`;
+  const ok = await sendTelegram(msg);
+  if (ok) addLog('info', `Telegram alert sent for ${pair.name}`);
+}
+
+// ══════════════════════════════════════════════════════════════
+//  OWNED SHARE CLASS
+// ══════════════════════════════════════════════════════════════
+let ownedShare = localStorage.getItem('arb_owned') || 'either'; // 'A' | 'B' | 'either'
+
+function setOwned(val) {
+  ownedShare = val;
+  localStorage.setItem('arb_owned', val);
+  document.getElementById('ownA').classList.toggle('active', val === 'A');
+  document.getElementById('ownB').classList.toggle('active', val === 'B');
+  document.getElementById('ownEither').classList.toggle('active', val === 'either');
+  const notes = {
+    A:      'Signal only when A is overpriced → Sell A, Buy B.',
+    B:      'Signal only when B/C is overpriced → Sell B, Buy A.',
+    either: 'Showing opportunities in both directions.',
+  };
+  document.getElementById('ownedNote').textContent = notes[val];
+}
+
+// Returns true if the current price relationship creates an actionable
+// opportunity for what the user holds.
+function isDirectionalOpp(pA, pB, ownedShare) {
+  if (ownedShare === 'A')      return pA > pB;   // user holds A → sell A (expensive), buy B
+  if (ownedShare === 'B')      return pB > pA;   // user holds B → sell B (expensive), buy A
+  return pA !== pB;                               // either → any spread is interesting
+}
+
+// ══════════════════════════════════════════════════════════════
+//  OMX STOCKHOLM A/B PAIRS DATABASE
+// ══════════════════════════════════════════════════════════════
+const OMX_PAIRS = [
+  // Large Cap
+  { name:"Atlas Copco",      tA:"ATCO-A.ST",  tB:"ATCO-B.ST",  cap:"Large Cap", sector:"Industry" },
+  { name:"Ericsson",         tA:"ERIC-A.ST",  tB:"ERIC-B.ST",  cap:"Large Cap", sector:"Telecom" },
+  { name:"Handelsbanken",    tA:"SHB-A.ST",   tB:"SHB-B.ST",   cap:"Large Cap", sector:"Finance" },
+  { name:"Husqvarna",        tA:"HUSQ-A.ST",  tB:"HUSQ-B.ST",  cap:"Large Cap", sector:"Consumer" },
+  { name:"Industrivärden",   tA:"INDU-A.ST",  tB:"INDU-C.ST",  cap:"Large Cap", sector:"Finance",  note:"A/C classes" },
+  { name:"Investor",         tA:"INVE-A.ST",  tB:"INVE-B.ST",  cap:"Large Cap", sector:"Finance" },
+  { name:"Kinnevik",         tA:"KINV-A.ST",  tB:"KINV-B.ST",  cap:"Large Cap", sector:"Finance" },
+  { name:"NCC",              tA:"NCC-A.ST",   tB:"NCC-B.ST",   cap:"Large Cap", sector:"Construction" },
+  { name:"NIBE Industrier",  tA:"NIBE-A.ST",  tB:"NIBE-B.ST",  cap:"Large Cap", sector:"Industry" },
+  { name:"SCA",              tA:"SCA-A.ST",   tB:"SCA-B.ST",   cap:"Large Cap", sector:"Forest" },
+  { name:"Securitas",        tA:"SECU-A.ST",  tB:"SECU-B.ST",  cap:"Large Cap", sector:"Service" },
+  { name:"Skanska",          tA:"SKA-A.ST",   tB:"SKA-B.ST",   cap:"Large Cap", sector:"Construction" },
+  { name:"SKF",              tA:"SKF-A.ST",   tB:"SKF-B.ST",   cap:"Large Cap", sector:"Industry" },
+  { name:"SSAB",             tA:"SSAB-A.ST",  tB:"SSAB-B.ST",  cap:"Large Cap", sector:"Steel" },
+  { name:"Sweco",            tA:"SWEC-A.ST",  tB:"SWEC-B.ST",  cap:"Large Cap", sector:"Engineering" },
+  { name:"Tele2",            tA:"TEL2-A.ST",  tB:"TEL2-B.ST",  cap:"Large Cap", sector:"Telecom" },
+  { name:"Trelleborg",       tA:"TREL-A.ST",  tB:"TREL-B.ST",  cap:"Large Cap", sector:"Industry" },
+  { name:"Volvo",            tA:"VOLV-A.ST",  tB:"VOLV-B.ST",  cap:"Large Cap", sector:"Vehicles" },
+  { name:"Wallenstam",       tA:"WALL-A.ST",  tB:"WALL-B.ST",  cap:"Large Cap", sector:"Real Estate" },
+  // Mid Cap
+  { name:"Addlife",          tA:"ALIF-A.ST",  tB:"ALIF-B.ST",  cap:"Mid Cap",   sector:"Healthcare" },
+  { name:"Addtech",          tA:"ADDT-A.ST",  tB:"ADDT-B.ST",  cap:"Mid Cap",   sector:"Industry" },
+  { name:"Elanders",         tA:"ELAN-A.ST",  tB:"ELAN-B.ST",  cap:"Mid Cap",   sector:"Print/Logistics" },
+  { name:"Fastighets Balder",tA:"BALD-A.ST",  tB:"BALD-B.ST",  cap:"Mid Cap",   sector:"Real Estate" },
+  { name:"Getinge",          tA:"GETI-A.ST",  tB:"GETI-B.ST",  cap:"Mid Cap",   sector:"Healthcare" },
+  { name:"Hufvudstaden",     tA:"HUFV-A.ST",  tB:"HUFV-C.ST",  cap:"Mid Cap",   sector:"Real Estate", note:"A/C classes" },
+  { name:"Latour",           tA:"LATO-A.ST",  tB:"LATO-B.ST",  cap:"Mid Cap",   sector:"Finance" },
+  { name:"Lundbergföretagen",tA:"LUND-A.ST",  tB:"LUND-B.ST",  cap:"Mid Cap",   sector:"Finance" },
+  { name:"Nolato",           tA:"NOLA-A.ST",  tB:"NOLA-B.ST",  cap:"Mid Cap",   sector:"Industry" },
+  { name:"Peab",             tA:"PEAB-A.ST",  tB:"PEAB-B.ST",  cap:"Mid Cap",   sector:"Construction" },
+  { name:"Ratos",            tA:"RATO-A.ST",  tB:"RATO-B.ST",  cap:"Mid Cap",   sector:"Finance" },
+  { name:"Sagax",            tA:"SAGA-A.ST",  tB:"SAGA-B.ST",  cap:"Mid Cap",   sector:"Real Estate" },
+  // Small Cap
+  { name:"Sdiptech",         tA:"SDIP-A.ST",  tB:"SDIP-B.ST",  cap:"Small Cap", sector:"Industry" },
+  { name:"Vitec Software",   tA:"VITS-A.ST",  tB:"VITS-B.ST",  cap:"Small Cap", sector:"Software" },
+  { name:"Xano Industri",    tA:"XANO-A.ST",  tB:"XANO-B.ST",  cap:"Small Cap", sector:"Industry" },
+];
+
+// ══════════════════════════════════════════════════════════════
+//  MEMORY / LEARNING  (localStorage)
+// ══════════════════════════════════════════════════════════════
+const MEM_KEY = 'arb_memory_v2';
+
+function loadMemory() {
+  try {
+    return JSON.parse(localStorage.getItem(MEM_KEY)) || {};
+  } catch { return {}; }
+}
+
+function saveMemory(m) {
+  try { localStorage.setItem(MEM_KEY, JSON.stringify(m)); } catch {}
+}
+
+function getPairMem(name) {
+  const m = loadMemory();
+  return m[name] || { fetches:0, opps:0, maxSpread:0, lastSeen:null, lastSpread:null };
+}
+
+function updatePairMem(name, spread, isOpp) {
+  const m = loadMemory();
+  if (!m[name]) m[name] = { fetches:0, opps:0, maxSpread:0, lastSeen:null, lastSpread:null };
+  m[name].fetches++;
+  m[name].lastSeen = new Date().toISOString();
+  m[name].lastSpread = spread;
+  if (spread > m[name].maxSpread) m[name].maxSpread = spread;
+  if (isOpp) m[name].opps++;
+  // Global stats
+  if (!m._global) m._global = { fetches:0, opps:0, bestSpread:0, bestPair:'' };
+  m._global.fetches++;
+  if (isOpp) m._global.opps++;
+  if (spread > m._global.bestSpread) { m._global.bestSpread = spread; m._global.bestPair = name; }
+  saveMemory(m);
+}
+
+function clearMemory() {
+  if (!confirm('Clear all learned data?')) return;
+  localStorage.removeItem(MEM_KEY);
+  renderStats(); buildHeatBar(); addLog('info','Memory cleared');
+}
+
+// ══════════════════════════════════════════════════════════════
+//  PAIR DROPDOWN
+// ══════════════════════════════════════════════════════════════
+let filteredPairs = [];
+
+function buildDropdown(filter = '') {
+  const mem = loadMemory();
+  const lf = filter.toLowerCase();
+
+  // Score & filter
+  filteredPairs = OMX_PAIRS
+    .filter(p => !lf ||
+      p.name.toLowerCase().includes(lf) ||
+      p.tA.toLowerCase().includes(lf) ||
+      p.tB.toLowerCase().includes(lf) ||
+      p.sector.toLowerCase().includes(lf))
+    .map(p => {
+      const pm = mem[p.name] || {};
+      return { ...p, _score: (pm.opps||0)*10 + (pm.fetches||0)*0.1 };
+    })
+    .sort((a,b) => b._score - a._score);
+
+  const sel = document.getElementById('pairSelect');
+  const curVal = sel.value;
+  sel.innerHTML = '';
+
+  // Group by cap
+  const groups = {};
+  filteredPairs.forEach(p => {
+    if (!groups[p.cap]) groups[p.cap] = [];
+    groups[p.cap].push(p);
+  });
+
+  const order = ['Large Cap','Mid Cap','Small Cap'];
+  order.forEach(cap => {
+    if (!groups[cap]) return;
+    const og = document.createElement('optgroup');
+    og.label = `── ${cap} ──`;
+    groups[cap].forEach(p => {
+      const pm = mem[p.name] || {};
+      const stars = pm.opps > 10 ? ' ★★★' : pm.opps > 3 ? ' ★★' : pm.opps > 0 ? ' ★' : '';
+      const opt = document.createElement('option');
+      opt.value = p.name;
+      opt.textContent = `${p.name}${stars}`;
+      if (p.name === curVal) opt.selected = true;
+      og.appendChild(opt);
+    });
+    sel.appendChild(og);
+  });
+
+  if (filteredPairs.length === 0) {
+    const opt = document.createElement('option');
+    opt.textContent = 'No matches';
+    opt.disabled = true;
+    sel.appendChild(opt);
+  }
+}
+
+function filterPairs(q) { buildDropdown(q); }
+
+function onPairSelect(name) {
+  const p = OMX_PAIRS.find(x => x.name === name);
+  if (!p) return;
+  currentPair = p;
+  const mem = getPairMem(name);
+  const info = document.getElementById('pairInfo');
+  info.classList.add('visible');
+  document.getElementById('pairName').textContent = name;
+  const meta = document.getElementById('pairMeta');
+  meta.innerHTML = `
+    <span>${p.tA} / ${p.tB}</span>
+    <span class="tag">${p.cap}</span>
+    <span class="tag">${p.sector}</span>
+    ${p.note ? `<span class="tag">${p.note}</span>` : ''}
+    ${mem.fetches > 0
+      ? `<span class="seen-badge">Seen ${mem.fetches}× · ${mem.opps} opp${mem.opps!==1?'s':''} · max ${fmt(mem.maxSpread)} SEK</span>
+         <button onclick="deletePairFromMemory('${name.replace(/'/g,"\\'")}');" style="background:none;border:1px solid var(--border2);color:var(--muted);font-family:var(--mono);font-size:8px;letter-spacing:.1em;padding:2px 6px;cursor:pointer;" onmouseover="this.style.color='var(--red)';this.style.borderColor='var(--red)'" onmouseout="this.style.color='var(--muted)';this.style.borderColor='var(--border2)'">⊗ FORGET</button>`
+      : `<span class="never-badge">Never monitored</span>`}
+  `;
+}
+
+// ══════════════════════════════════════════════════════════════
+//  HEAT BAR
+// ══════════════════════════════════════════════════════════════
+function buildHeatBar() {
+  const mem = loadMemory();
+  const ranked = OMX_PAIRS
+    .filter(p => (mem[p.name]||{}).opps > 0)
+    .map(p => ({ ...p, opps: mem[p.name].opps, maxSpread: mem[p.name].maxSpread }))
+    .sort((a,b) => b.opps - a.opps)
+    .slice(0,8);
+
+  const wrap = document.getElementById('heatBarWrap');
+  if (ranked.length === 0) { wrap.style.display='none'; return; }
+  wrap.style.display = 'block';
+
+  const bar = document.getElementById('heatBar');
+  // Keep label
+  bar.innerHTML = '<span class="heat-bar-label">Hot pairs</span>';
+  ranked.forEach((p,i) => {
+    const div = document.createElement('div');
+    div.className = `heat-chip ${i===0?'h1':i<3?'h2':'h3'}`;
+    div.innerHTML = `
+      <div>
+        <span class="chip-name">${p.name}</span>
+        <span class="chip-heat">&nbsp;${p.opps} opp${p.opps!==1?'s':''}</span>
+      </div>
+      <span class="chip-badge">${fmt(p.maxSpread)} SEK</span>
+    `;
+    div.onclick = () => {
+      document.getElementById('pairSelect').value = p.name;
+      onPairSelect(p.name);
+    };
+    bar.appendChild(div);
+  });
+}
+
+// ══════════════════════════════════════════════════════════════
+//  STATS
+// ══════════════════════════════════════════════════════════════
+function renderStats() {
+  const m = loadMemory();
+  const g = m._global || {};
+  const pairs = Object.keys(m).filter(k=>k!=='_global' && (m[k].fetches||0)>0);
+  document.getElementById('statPairsMonitored').textContent = pairs.length;
+  document.getElementById('statOppsFound').textContent = g.opps||0;
+  document.getElementById('statBestSpread').textContent = g.bestSpread ? `${fmt(g.bestSpread)} SEK` : '—';
+  document.getElementById('statFetches').textContent = g.fetches||0;
+}
+
+// ══════════════════════════════════════════════════════════════
+//  SPARKLINE
+// ══════════════════════════════════════════════════════════════
+let sparkData = {};   // { pairName: [spread, ...] }
+const MAX_SPARK = 60;
+
+function addSparkPoint(name, spread) {
+  if (!sparkData[name]) sparkData[name] = [];
+  sparkData[name].push(spread);
+  if (sparkData[name].length > MAX_SPARK) sparkData[name].shift();
+  drawSparkline(name);
+}
+
+function drawSparkline(name) {
+  const canvas = document.getElementById('sparkCanvas');
+  const ctx = canvas.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.getBoundingClientRect();
+  canvas.width = rect.width * dpr;
+  canvas.height = rect.height * dpr;
+  ctx.scale(dpr, dpr);
+  const W = rect.width, H = rect.height;
+
+  ctx.clearRect(0,0,W,H);
+
+  const pts = sparkData[name];
+  if (!pts || pts.length < 2) return;
+
+  const min = Math.min(...pts)*0.99;
+  const max = Math.max(...pts)*1.01;
+  const range = max - min || 1;
+  const pad = 8;
+  const PW = W - pad*2, PH = H - pad*2;
+
+  // Grid lines
+  ctx.strokeStyle = 'rgba(26,37,53,0.8)';
+  ctx.lineWidth = 1;
+  for(let i=0;i<=4;i++){
+    const y = pad + (PH/4)*i;
+    ctx.beginPath(); ctx.moveTo(pad,y); ctx.lineTo(W-pad,y); ctx.stroke();
+  }
+
+  // Fill
+  const gradient = ctx.createLinearGradient(0,0,0,H);
+  gradient.addColorStop(0,'rgba(0,232,162,.25)');
+  gradient.addColorStop(1,'rgba(0,232,162,.01)');
+
+  ctx.beginPath();
+  pts.forEach((v,i) => {
+    const x = pad + (i/(pts.length-1))*PW;
+    const y = pad + PH - ((v-min)/range)*PH;
+    i===0 ? ctx.moveTo(x,y) : ctx.lineTo(x,y);
+  });
+  ctx.lineTo(pad+PW, pad+PH);
+  ctx.lineTo(pad, pad+PH);
+  ctx.closePath();
+  ctx.fillStyle = gradient;
+  ctx.fill();
+
+  // Line
+  ctx.beginPath();
+  pts.forEach((v,i) => {
+    const x = pad + (i/(pts.length-1))*PW;
+    const y = pad + PH - ((v-min)/range)*PH;
+    i===0 ? ctx.moveTo(x,y) : ctx.lineTo(x,y);
+  });
+  ctx.strokeStyle = '#00e8a2';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  // Last dot
+  const lx = pad+PW, ly = pad+PH - ((pts[pts.length-1]-min)/range)*PH;
+  ctx.beginPath(); ctx.arc(lx,ly,3,0,Math.PI*2);
+  ctx.fillStyle='#00e8a2'; ctx.fill();
+
+  document.getElementById('sparkPair').textContent = name;
+  document.getElementById('sparkMin').textContent = `Min: ${fmt(min)}`;
+  document.getElementById('sparkAvg').textContent = `Avg: ${fmt(pts.reduce((a,b)=>a+b,0)/pts.length)}`;
+  document.getElementById('sparkMax').textContent = `Max: ${fmt(max)}`;
+}
+
+// ══════════════════════════════════════════════════════════════
+//  PRICE FETCH
+// ══════════════════════════════════════════════════════════════
+const PROXY = 'https://api.allorigins.win/raw?url=';
+
+async function fetchPrice(ticker) {
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?interval=1d&range=1d`;
+  const res = await fetch(PROXY + encodeURIComponent(url));
+  if (!res.ok) throw new Error(`HTTP ${res.status} for ${ticker}`);
+  const data = await res.json();
+  const meta = data?.chart?.result?.[0]?.meta;
+  if (!meta || !meta.regularMarketPrice) throw new Error(`No data for ${ticker}`);
+  return {
+    price: meta.regularMarketPrice,
+    prev:  meta.previousClose || meta.chartPreviousClose || meta.regularMarketPrice,
+    currency: meta.currency || 'SEK',
+  };
+}
+
+// ══════════════════════════════════════════════════════════════
+//  CORE REFRESH
+// ══════════════════════════════════════════════════════════════
+let currentPair = null;
+let monitorInterval = null;
+let prevPA = null, prevPB = null;
+
+async function refresh() {
+  const p = currentPair;
+  if (!p) { addLog('info','No pair selected'); return; }
+
+  const numShares = parseFloat(document.getElementById('numShares').value)||0;
+  const marginPct = parseFloat(document.getElementById('margin').value)||0;
+
+  setLive('on','FETCHING…');
+
+  try {
+    const [dA, dB] = await Promise.all([fetchPrice(p.tA), fetchPrice(p.tB)]);
+    const pA = dA.price, pB = dB.price, cur = dA.currency;
+    const chA = pA - dA.prev, chB = pB - dB.prev;
+
+    // Update cards
+    updateCard('A', p.tA, pA, chA, chA/dA.prev*100, cur);
+    updateCard('B', p.tB, pB, chB, chB/dB.prev*100, cur);
+    prevPA = pA; prevPB = pB;
+
+    // Math
+    const absSpread   = Math.abs(pA - pB);
+    const direction   = pA > pB ? 'Sell A, Buy B' : 'Buy A, Sell B';
+    const buyTicker   = pA > pB ? p.tB : p.tA;
+    const sellTicker  = pA > pB ? p.tA : p.tB;
+    const gross       = absSpread * numShares;
+    const courtageVal = parseFloat(document.getElementById('courtage').value)||0;
+    const totalCourt  = calcCourtage(courtageVal, courtageMode, pA, pB, numShares);
+    const margAmt     = (marginPct/100) * gross;
+    const totalCosts  = totalCourt + margAmt;
+    const net         = gross - totalCosts;
+    const bePerShare  = numShares > 0 ? totalCourt / numShares : 0;
+    const tgtPerShare = numShares > 0 ? totalCosts / numShares : 0;
+    const pct         = tgtPerShare > 0 ? Math.min(100,(absSpread/tgtPerShare)*100) : 0;
+    const directional = isDirectionalOpp(pA, pB, ownedShare);
+    const isOpp       = net > 0 && numShares > 0 && directional;
+
+    // Court label for table
+    const courtLabel = courtageMode === 'SEK'
+      ? `-${fmt(totalCourt)} ${cur} (${fmt(courtageVal)} × 2)`
+      : `-${fmt(totalCourt)} ${cur} (${courtageVal}% × 2 legs)`;
+
+    // Spread meter
+    setEl('spreadVal', `${fmt(absSpread)} ${cur}`);
+    document.getElementById('spreadVal').className = `spread-val ${absSpread>tgtPerShare?'pos':absSpread>bePerShare?'neu':'neg'}`;
+    document.getElementById('trackFill').style.setProperty('--w', pct+'%');
+    document.getElementById('trackFill').className = `track-fill ${isOpp?'go':pct>70?'warn':''}`;
+    setEl('tmBreak',`Break-even ${fmt(bePerShare)}`);
+    setEl('tmTarget',`Target ${fmt(tgtPerShare)}`);
+
+    // Table
+    setEl('r_spread',  `${fmt(absSpread)} ${cur}`);
+    setEl('r_gross',   `${fmt(gross)} ${cur}`);
+    setEl('r_court',   courtLabel);
+    setEl('r_mPct',    marginPct.toFixed(1));
+    setEl('r_margAmt', `-${fmt(margAmt)} ${cur}`);
+    setEl('r_costs',   `-${fmt(totalCosts)} ${cur}`);
+    setEl('r_be',      `${fmt(bePerShare)} ${cur}/share`);
+    const netEl = document.getElementById('r_net');
+    netEl.textContent = `${net>=0?'+':''}${fmt(net)} ${cur}`;
+    netEl.className   = net>0?'v-pos':net<0?'v-neg':'v-dim';
+
+    // Action labels on cards
+    document.getElementById('cardA').className = `pcard ${pA>pB?'sell':'buy'}`;
+    document.getElementById('cardB').className = `pcard ${pB>pA?'sell':'buy'}`;
+    document.getElementById('actA').textContent = pA>pB?'SELL':'BUY';
+    document.getElementById('actB').textContent = pB>pA?'SELL':'BUY';
+
+    // Verdict
+    if (numShares === 0) {
+      setVerdict('no','◌','SET SHARE COUNT','Enter the number of shares to see profit analysis.');
+    } else if (isOpp) {
+      setVerdict('go','◈','ARBITRAGE OPPORTUNITY',
+        `${direction} · Est. profit: +${fmt(net)} ${cur} after courtage + ${marginPct}% margin`);
+      flashOpp(`▲ ARB: ${direction} · +${fmt(net)} ${cur} (${p.name})`);
+      showBanner(`OPPORTUNITY: ${p.name} — ${direction} — net profit +${fmt(net)} ${cur}`);
+      maybeSendTgAlert(p, direction, net, pA, pB, absSpread, cur, marginPct);
+    } else if (net > 0 && !directional) {
+      // Spread is profitable but in the wrong direction for what the user holds
+      const wrongDir = pA > pB ? 'Sell A, Buy B' : 'Buy A, Sell B';
+      const ownLabel = ownedShare === 'A' ? 'A-share' : 'B/C-share';
+      setVerdict('warn','◈','WRONG DIRECTION',
+        `Spread profitable (${fmt(net)} ${cur}) via "${wrongDir}" — but you hold the ${ownLabel}. Switch "I Currently Own" or wait for reversal.`);
+      hideBanner();
+    } else {
+      const gap = totalCosts - gross;
+      const pctRdy = tgtPerShare > 0 ? ((absSpread/tgtPerShare)*100).toFixed(0) : 0;
+      setVerdict('no','◌','NO OPPORTUNITY',
+        `Spread covers ${pctRdy}% of total costs. Need ${fmt(gap/Math.max(1,numShares))} ${cur}/share more.`);
+      hideBanner();
+    }
+
+    // Sparkline + memory
+    addSparkPoint(p.name, absSpread);
+    updatePairMem(p.name, absSpread, isOpp);
+    renderStats();
+    buildHeatBar();
+    buildDropdown(document.getElementById('pairSearch').value);
+    onPairSelect(p.name); // refresh info strip
+
+    setLive('on','LIVE');
+    const now = new Date();
+    setEl('lastUpdated', now.toLocaleTimeString('sv-SE'));
+    document.getElementById('ts').textContent = `Updated ${now.toLocaleTimeString('sv-SE')}`;
+    addLog('info',`${p.name}: A=${fmt(pA)}, B=${fmt(pB)}, Spread=${fmt(absSpread)} ${cur}`);
+
+  } catch(err) {
+    setLive('err','ERROR');
+    setVerdict('no','✕','FETCH ERROR', err.message);
+    addLog('err', err.message);
+    flashOpp('✕ Fetch error: ' + err.message, true);
+    console.error(err);
+  }
+}
+
+function startMonitoring() {
+  if (!currentPair) { alert('Please select a pair first.'); return; }
+  stopMonitoring();
+  const iv = parseInt(document.getElementById('refreshInterval').value)*1000;
+  refresh();
+  monitorInterval = setInterval(refresh, iv);
+  addLog('info',`Started monitoring ${currentPair.name} every ${iv/1000}s`);
+}
+
+function stopMonitoring() {
+  if (monitorInterval) { clearInterval(monitorInterval); monitorInterval=null; }
+  setLive('','IDLE');
+}
+
+function manualRefresh() {
+  if (monitorInterval) {
+    clearInterval(monitorInterval);
+    const iv = parseInt(document.getElementById('refreshInterval').value)*1000;
+    refresh();
+    monitorInterval = setInterval(refresh, iv);
+  } else { refresh(); }
+}
+
+// ══════════════════════════════════════════════════════════════
+//  UI HELPERS
+// ══════════════════════════════════════════════════════════════
+function fmt(n) {
+  if (n===null||n===undefined||isNaN(n)) return '—';
+  return n.toLocaleString('sv-SE',{minimumFractionDigits:2,maximumFractionDigits:2});
+}
+function setEl(id,v){ document.getElementById(id).textContent=v; }
+function setLive(state,txt){
+  document.getElementById('liveText').textContent = txt;
+  document.getElementById('liveDot').className = 'live-dot'+(state?' '+state:'');
+}
+function setVerdict(cls,icon,title,desc){
+  document.getElementById('verdict').className='verdict '+cls;
+  setEl('vIcon',icon); setEl('vTitle',title); setEl('vDesc',desc);
+}
+function updateCard(ab, ticker, price, chg, chgPct, cur){
+  setEl('t'+ab, ticker);
+  const pe=document.getElementById('p'+ab);
+  pe.textContent=fmt(price)+' '+cur; pe.className='pc-price';
+  const ce=document.getElementById('c'+ab);
+  const s=chg>=0?'+':'';
+  ce.textContent=`${s}${fmt(chg)} (${s}${chgPct.toFixed(2)}%)`;
+  ce.className='pc-chg '+(chg>0?'pos':chg<0?'neg':'flat');
+}
+
+let logItems = [];
+function addLog(type, msg){
+  const id = Date.now() + Math.random();
+  logItems.unshift({id, t:new Date().toLocaleTimeString('sv-SE'), type, msg});
+  if(logItems.length>60) logItems.pop();
+  const el=document.getElementById('logList');
+  if(logItems.length===1) el.innerHTML='';
+  const row=document.createElement('div');
+  row.className='log-item';
+  row.dataset.id = id;
+  row.innerHTML=`<span class="log-t">${logItems[0].t}</span><span class="log-m">${msg}</span><span class="log-b ${type}">${type.toUpperCase()}</span><button class="log-del" title="Remove">×</button>`;
+  row.querySelector('.log-del').onclick = () => deleteLogRow(row, id);
+  el.insertBefore(row, el.firstChild);
+  while(el.children.length>40) el.removeChild(el.lastChild);
+}
+
+function deleteLogRow(row, id) {
+  row.style.transition = 'opacity .2s, transform .2s';
+  row.style.opacity = '0';
+  row.style.transform = 'translateX(6px)';
+  setTimeout(() => {
+    row.remove();
+    logItems = logItems.filter(i => i.id !== id);
+    if (document.getElementById('logList').children.length === 0) {
+      document.getElementById('logList').innerHTML = '<div class="empty-log">Log cleared.</div>';
+    }
+  }, 200);
+}
+
+function clearLog() {
+  logItems = [];
+  const el = document.getElementById('logList');
+  el.innerHTML = '<div class="empty-log">Log cleared.</div>';
+}
+
+function deletePairFromMemory(name) {
+  if (!confirm(`Remove all learned data for "${name}"?`)) return;
+  const m = loadMemory();
+  delete m[name];
+  saveMemory(m);
+  buildDropdown(document.getElementById('pairSearch').value);
+  buildHeatBar();
+  renderStats();
+  onPairSelect(name);
+  addLog('info', `Memory cleared for ${name}`);
+}
+
+function flashOpp(msg, isErr=false){
+  document.querySelectorAll('.flash').forEach(e=>e.remove());
+  const el=document.createElement('div');
+  el.className='flash'+(isErr?' err':'');
+  el.textContent=msg;
+  document.body.appendChild(el);
+  setTimeout(()=>el.remove(),4500);
+}
+
+function showBanner(txt){
+  const b=document.getElementById('oppBanner');
+  b.className='opp-banner on'; b.childNodes[1] && (b.childNodes[1].textContent=txt);
+  b.textContent=''; b.appendChild(document.createTextNode(txt));
+  b.insertBefore(Object.assign(document.createElement('span'),{textContent:'▲ '}),b.firstChild);
+}
+function hideBanner(){ document.getElementById('oppBanner').className='opp-banner'; }
+
+// ══════════════════════════════════════════════════════════════
+//  INIT
+// ══════════════════════════════════════════════════════════════
+window.addEventListener('load',()=>{
+  buildDropdown();
+  renderStats();
+  buildHeatBar();
+
+  // Restore courtage mode
+  setCourtageMode(courtageMode);
+
+  // Restore owned share class
+  setOwned(ownedShare);
+
+  // Restore Telegram config
+  const tgCfg = loadTgConfig();
+  if (tgCfg.token)    document.getElementById('tgToken').value    = tgCfg.token;
+  if (tgCfg.chatId)   document.getElementById('tgChatId').value   = tgCfg.chatId;
+  if (tgCfg.cooldown) document.getElementById('tgCooldown').value = tgCfg.cooldown;
+  updateTgStatus();
+
+  // Resize sparkline on window resize
+  window.addEventListener('resize', ()=>{
+    if(currentPair && sparkData[currentPair.name]) drawSparkline(currentPair.name);
+  });
+});
+</script>
+</body>
+</html>
