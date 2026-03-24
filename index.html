@@ -362,6 +362,7 @@ select.fsel{
 .log-b.no{background:rgba(58,85,112,.15);color:var(--muted)}
 .log-b.err{background:rgba(255,69,96,.12);color:var(--red)}
 .log-b.info{background:rgba(33,150,243,.12);color:var(--blue)}
+.log-b.verbose{background:rgba(100,100,100,.12);color:var(--muted)}
 .log-del{
   background:none;border:none;color:var(--dim);font-size:12px;
   cursor:pointer;padding:0 2px;line-height:1;transition:color .15s;
@@ -497,6 +498,32 @@ select.fsel{
 }
 .btn-tg-test:hover{border-color:var(--blue);color:var(--blue)}
 .tg-throttle-note{font-size:9px;color:var(--muted);margin-top:6px;letter-spacing:.04em}
+
+/* ── LOG LEVEL SELECTOR ── */
+.log-level-bar{display:flex;gap:0;border:1px solid var(--border2);overflow:hidden}
+.ll-btn{
+  flex:1;background:none;border:none;border-right:1px solid var(--border2);
+  color:var(--muted);font-family:var(--mono);font-size:9px;font-weight:600;
+  letter-spacing:.1em;padding:5px 2px;cursor:pointer;transition:all .15s;
+  text-transform:uppercase;
+}
+.ll-btn:last-child{border-right:none}
+.ll-btn.active-verbose{background:rgba(96,165,250,.18);color:var(--blue)}
+.ll-btn.active-info{background:rgba(0,232,162,.14);color:var(--accent)}
+.ll-btn.active-err{background:rgba(255,69,96,.16);color:var(--red)}
+.ll-btn:not([class*=active]):hover{color:var(--text);background:var(--bg3)}
+
+/* ── CLICKABLE ERROR CHIP ── */
+.live-chip{cursor:default;transition:all .2s}
+.live-chip.has-error{cursor:pointer;border-color:var(--red) !important}
+.live-chip.has-error:hover{background:rgba(255,69,96,.08)}
+.err-count{
+  display:none;margin-left:5px;
+  font-size:9px;padding:1px 5px;
+  background:rgba(255,69,96,.2);color:var(--red);
+  font-weight:700;letter-spacing:.05em;
+}
+.live-chip.has-error .err-count{display:inline}
 </style>
 </head>
 <body>
@@ -511,9 +538,10 @@ select.fsel{
     <span class="logo-sub">OMX Stockholm · A/B Spread Monitor</span>
   </div>
   <div class="header-right">
-    <div class="live-chip">
+    <div class="live-chip" id="liveChip" onclick="onChipClick()">
       <span class="live-dot" id="liveDot"></span>
       <span id="liveText">IDLE</span>
+      <span class="err-count" id="errCount">0 ERR</span>
     </div>
     <button class="btn-sm" onclick="manualRefresh()">↻ Refresh</button>
     <button class="btn-sm" onclick="clearMemory()" title="Clear all learned data">⊗ Reset Memory</button>
@@ -608,7 +636,7 @@ select.fsel{
           <label>Courtage per Trade</label>
           <div class="courtage-row">
             <div class="input-wrap">
-              <input type="number" id="courtage" placeholder="99" min="0" step="0.01" value="99">
+              <input type="number" id="courtage" placeholder="0.15" min="0" step="0.01" value="0.15">
               <span class="unit" id="courtageUnit">SEK</span>
             </div>
             <div class="unit-toggle">
@@ -620,7 +648,7 @@ select.fsel{
         <div class="frow">
           <label>Margin</label>
           <div class="input-wrap">
-            <input type="number" id="margin" placeholder="10" min="0" max="100" step="0.1" value="10" style="padding-right:24px">
+            <input type="number" id="margin" placeholder="3" min="0" max="100" step="0.1" value="3" style="padding-right:24px">
             <span class="unit">%</span>
           </div>
         </div>
@@ -633,6 +661,8 @@ select.fsel{
           <option value="120">Every 2 minutes</option>
           <option value="300">Every 5 minutes</option>
           <option value="600">Every 10 minutes</option>
+          <option value="1800">Every 30 minutes</option>
+          <option value="3600">Every 60 minutes</option>
         </select>
       </div>
 
@@ -727,7 +757,15 @@ select.fsel{
     </div>
   </div>
   <div class="log-panel">
-    <div class="ptitle"><span>▤</span> Event Log <button class="btn-clear-log" onclick="clearLog()">⊗ Clear all</button></div>
+    <div class="ptitle" style="flex-wrap:wrap;gap:8px">
+      <span>▤</span> Event Log
+      <div class="log-level-bar" style="margin-left:4px">
+        <button class="ll-btn" id="ll-verbose" onclick="setLogLevel('verbose')" title="Show all events">VERBOSE</button>
+        <button class="ll-btn active-info" id="ll-info" onclick="setLogLevel('info')" title="Show info + errors">INFO</button>
+        <button class="ll-btn" id="ll-err" onclick="setLogLevel('err')" title="Show errors only">ERROR</button>
+      </div>
+      <button class="btn-clear-log" onclick="clearLog()" style="margin-left:auto">⊗ Clear all</button>
+    </div>
     <div class="log-list" id="logList">
       <div class="empty-log">No events yet.<br>Start monitoring to see activity.</div>
     </div>
@@ -794,7 +832,7 @@ select.fsel{
 // ══════════════════════════════════════════════════════════════
 //  COURTAGE MODE  (SEK fixed | % of trade value)
 // ══════════════════════════════════════════════════════════════
-let courtageMode = localStorage.getItem('arb_courtage_mode') || 'SEK';
+let courtageMode = localStorage.getItem('arb_courtage_mode') || '%';
 
 function setCourtageMode(mode) {
   courtageMode = mode;
@@ -1373,7 +1411,7 @@ async function refresh() {
     const now = new Date();
     setEl('lastUpdated', now.toLocaleTimeString('sv-SE'));
     document.getElementById('ts').textContent = `Updated ${now.toLocaleTimeString('sv-SE')}`;
-    addLog('info',`${p.name}: A=${fmt(pA)}, B=${fmt(pB)}, Spread=${fmt(absSpread)} ${cur}`);
+    addLog('verbose',`${p.name}: A=${fmt(pA)}, B=${fmt(pB)}, Spread=${fmt(absSpread)} ${cur}`);
 
   } catch(err) {
     setLive('err','ERROR');
@@ -1433,20 +1471,76 @@ function updateCard(ab, ticker, price, chg, chgPct, cur){
   ce.className='pc-chg '+(chg>0?'pos':chg<0?'neg':'flat');
 }
 
+// ── Log level ──────────────────────────────────────────────────
+// Hierarchy: verbose < info < err
+// 'verbose' shows everything; 'info' shows info+err; 'err' shows only err
+const LOG_LEVELS = ['verbose','info','err'];
+let logLevel = localStorage.getItem('arb_log_level') || 'info';
+let errorCount = 0;
+
+function setLogLevel(lvl) {
+  logLevel = lvl;
+  localStorage.setItem('arb_log_level', lvl);
+  ['verbose','info','err'].forEach(l => {
+    const btn = document.getElementById('ll-'+l);
+    btn.className = 'll-btn' + (l === lvl ? ` active-${l==='err'?'err':l==='verbose'?'verbose':'info'}` : '');
+  });
+  // Re-render existing log items with new filter
+  renderLog();
+}
+
+function isVisible(type) {
+  if (logLevel === 'verbose') return true;
+  if (logLevel === 'info')    return type === 'info' || type === 'err' || type === 'go';
+  if (logLevel === 'err')     return type === 'err';
+  return true;
+}
+
+function renderLog() {
+  const el = document.getElementById('logList');
+  el.innerHTML = '';
+  const visible = logItems.filter(i => isVisible(i.type));
+  if (visible.length === 0) {
+    el.innerHTML = `<div class="empty-log">No ${logLevel === 'err' ? 'errors' : 'events'} to show.<br>${logLevel !== 'verbose' ? 'Switch to VERBOSE to see all activity.' : 'Start monitoring to see activity.'}</div>`;
+    return;
+  }
+  visible.forEach(item => {
+    const row = document.createElement('div');
+    row.className = 'log-item';
+    row.dataset.id = item.id;
+    row.innerHTML = `<span class="log-t">${item.t}</span><span class="log-m">${item.msg}</span><span class="log-b ${item.type}">${item.type.toUpperCase()}</span><button class="log-del" title="Remove">×</button>`;
+    row.querySelector('.log-del').onclick = () => deleteLogRow(row, item.id);
+    el.appendChild(row);
+  });
+}
+
 let logItems = [];
-function addLog(type, msg){
+function addLog(type, msg) {
   const id = Date.now() + Math.random();
-  logItems.unshift({id, t:new Date().toLocaleTimeString('sv-SE'), type, msg});
-  if(logItems.length>60) logItems.pop();
-  const el=document.getElementById('logList');
-  if(logItems.length===1) el.innerHTML='';
-  const row=document.createElement('div');
-  row.className='log-item';
+  logItems.unshift({id, t: new Date().toLocaleTimeString('sv-SE'), type, msg});
+  if (logItems.length > 120) logItems.pop();
+
+  if (type === 'err') {
+    errorCount++;
+    const chip = document.getElementById('liveChip');
+    chip.classList.add('has-error');
+    const ec = document.getElementById('errCount');
+    ec.textContent = `${errorCount} ERR`;
+  }
+
+  if (!isVisible(type)) return; // don't render if filtered out
+
+  const el = document.getElementById('logList');
+  // Remove empty-state placeholder
+  if (el.querySelector('.empty-log')) el.innerHTML = '';
+
+  const row = document.createElement('div');
+  row.className = 'log-item';
   row.dataset.id = id;
-  row.innerHTML=`<span class="log-t">${logItems[0].t}</span><span class="log-m">${msg}</span><span class="log-b ${type}">${type.toUpperCase()}</span><button class="log-del" title="Remove">×</button>`;
+  row.innerHTML = `<span class="log-t">${logItems[0].t}</span><span class="log-m">${msg}</span><span class="log-b ${type}">${type.toUpperCase()}</span><button class="log-del" title="Remove">×</button>`;
   row.querySelector('.log-del').onclick = () => deleteLogRow(row, id);
   el.insertBefore(row, el.firstChild);
-  while(el.children.length>40) el.removeChild(el.lastChild);
+  while (el.children.length > 60) el.removeChild(el.lastChild);
 }
 
 function deleteLogRow(row, id) {
@@ -1464,8 +1558,22 @@ function deleteLogRow(row, id) {
 
 function clearLog() {
   logItems = [];
-  const el = document.getElementById('logList');
-  el.innerHTML = '<div class="empty-log">Log cleared.</div>';
+  errorCount = 0;
+  document.getElementById('liveChip').classList.remove('has-error');
+  document.getElementById('errCount').textContent = '0 ERR';
+  document.getElementById('logList').innerHTML = '<div class="empty-log">Log cleared.</div>';
+}
+
+function onChipClick() {
+  const chip = document.getElementById('liveChip');
+  if (!chip.classList.contains('has-error')) return;
+  // Switch to error-only log level and scroll log into view
+  setLogLevel('err');
+  document.getElementById('logList').closest('.log-panel').scrollIntoView({behavior:'smooth', block:'start'});
+  // Reset error counter
+  errorCount = 0;
+  chip.classList.remove('has-error');
+  document.getElementById('errCount').textContent = '0 ERR';
 }
 
 function deletePairFromMemory(name) {
@@ -1510,6 +1618,9 @@ window.addEventListener('load',()=>{
 
   // Restore owned share class
   setOwned(ownedShare);
+
+  // Restore log level
+  setLogLevel(logLevel);
 
   // Restore Telegram config
   const tgCfg = loadTgConfig();
